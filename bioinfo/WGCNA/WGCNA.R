@@ -1,0 +1,302 @@
+# BiocManager::install("WGCNA") 
+library('WGCNA')
+
+# 一、数据预处理
+# 在读入数据时，遇到字符串之后，不将其转换为factors，仍然保留为字符串格式
+options(stringsAsFactors = FALSE)
+# 导入表达矩阵示例数据，这里填写自己存放表达矩阵的路径
+femData = read.csv("M:\\Data\\bioinfo\\WGCNA\\LiverFemale3600.csv")	# femData代表该文件
+# 查看数据
+#dim(femData)	# dim查看矩阵形状
+#names(femData)	# names查看列标，即每一列的标题
+
+# 提取样本-基因表达矩阵
+datExpr0 = as.data.frame(t(femData[, -c(1:8)]))
+# 删除femData矩阵第1到8列，再转置，再变为数据格式，将所得用datExpr0表示
+# 第一列是基因名，也删除了，即要以所有列标都是样本名的形式做转置
+names(datExpr0) = femData$substanceBXH
+# 转置后，行标变成了样本名，然后重新加入基因名作为列标
+# femData$substanceBXH表示在femData矩阵里面依次取substanceBXH列的值
+# names表示列标，即将这些值（基因名）作为datExpr0的列标
+rownames(datExpr0) = names(femData)[-c(1:8)]
+# 将femData列标的第1到8个删除后，其余的列标依次作为datExpr0的行标，但本步可以不用，因为在定义datExpr0时就已经完成了这不
+# 观察数据
+datExpr0[1:6,1:6]
+
+# 二、检查过度缺失值和离群样本
+# 检查缺失值太多的基因和样本
+gsg = goodSamplesGenes(datExpr0, verbose = 3);
+gsg$allOK
+# 不返回True时剔除不符合数据
+if(!gsg$allOK)
+{
+  #(可选)打印被删除的基因和样本名称:
+  if(sum(!gsg$goodGenes)>0)
+    printFlush(paste("Removinggenes:",paste(names(datExpr0)[!gsg$goodGenes], collapse =",")));
+  if(sum(!gsg$goodSamples)>0)
+    printFlush(paste("Removingsamples:",paste(rownames(datExpr0)[!gsg$goodSamples], collapse =",")));
+  #删除不满足要求的基因和样本:
+  datExpr0 = datExpr0[gsg$goodSamples, gsg$goodGenes]
+}
+
+# 对离群样本做检测，目标是样本，所以行标是样本名，用我们上面处理得到矩阵datExpr0
+# 目的是通过样本的聚类树看看是否有任何明显的异常值。
+sampleTree = hclust(dist(datExpr0), method ="average");
+# dist()表示转为数值，method表示距离的计算方式，其他种类的详见百度
+sizeGrWindow(12,9)
+# 绘制样本树:打开一个尺寸为12 * 9英寸的图形输出窗口
+# 可对窗口大小进行调整
+# 如要保存可运行下面语句
+# pdf(file="M:\\Data\\bioinfo\\WGCNA\\sampleClustering.pdf",width=12,height=9);
+par(cex = 0.6)	# 控制图片中文字和点的大小
+par(mar =c(0,4,2,0))	# 设置图形的边界，下，左，上，右的页边距
+plot(sampleTree, main ="Sample clustering to detectoutliers",sub="", xlab="", cex.lab = 1.5,
+     cex.axis= 1.5, cex.main = 2)
+# 参数依次表示：sampleTree聚类树，图名，副标题颜色，坐标轴标签颜色，坐标轴刻度文字颜色，标题颜色
+# 其实只要包括sampleTree和图名即可
+# 绘制阈值切割线
+abline(h = 15,col="red"); # 高度15,需由上图确定，颜色红色
+# dev.off()
+# 确定阈值线下的集群
+clust = cutreeStatic(sampleTree, cutHeight = 15, minSize = 10)
+# 以高度15切割，要求留下的最少为10个
+table(clust)	# 查看切割后形成的集合
+# clust1包含想要留下的样本.
+keepSamples = (clust==1)	# 将clust序号为1的放入keepSamples
+datExpr = datExpr0[keepSamples, ]		
+# 将树中内容放入矩阵datExpr中，因为树中剩余矩阵不能直接作为矩阵处理
+nGenes =ncol(datExpr)	# ncol，crow分别表示提取矩阵的列数和行数
+nSamples =nrow(datExpr)
+
+# 三、载入临床特征数据
+# 将样本信息与临床特征进行匹配。
+traitData =read.csv("M:\\Data\\bioinfo\\WGCNA\\ClinicalTraits.csv")
+dim(traitData)	# 看看形状
+names(traitData)	# 看看列标
+# 删除不必要的列.
+allTraits = traitData[, -c(31, 16)]	# 将去掉第31和16列（两个不包含数据的列）后的traitData存入allTraits中
+allTraits = allTraits[,c(2, 11:36) ] # 在allTraits中保留第2,11到36列（只取样本名的性状相关数据）
+# 这时的allTraits是只包含样本名和性状相关数据的矩阵
+dim(allTraits)	# 看看形状
+names(allTraits)	# 看看列标
+# 形成一个包含临床特征的数据框
+femaleSamples =rownames(datExpr)	# femaleSamples存放存放录入基因表达量的样本名称
+traitRows =match(femaleSamples, allTraits$Mice)	# 将表达矩阵和性状矩阵中，样本名（Mice）重复的这些样本在allTraits中的行标返回给traitRows（一个数字向量）
+datTraits = allTraits[traitRows, -1]	# 在allTraits中取上步的得到的这些行（行），并删除第一列，然后组成矩阵datTraits
+rownames(datTraits) = allTraits[traitRows, 1]	# 因为上一步删了第一列，所以重新赋予第一列，即这些行的样本名字
+collectGarbage() # 释放内存
+
+# 将临床特征和样本树状图的关系可视化
+sampleTree2 = hclust(dist(datExpr), method ="average")
+# 重新聚类样本
+traitColors = numbers2colors(datTraits, signed = FALSE);
+# 将临床特征值转换为连续颜色:白色表示低，红色表示高，灰色表示缺失
+# pdf(file="M:\\Data\\bioinfo\\WGCNA\\sampletreewithheat.pdf",width=12,height=9);
+plotDendroAndColors(sampleTree2, traitColors,
+                    groupLabels =names(datTraits),
+                    main ="Sample dendrogram and trait heatmap")
+# 在样本聚类图的基础上，增加临床特征值热图
+# dev.off()
+
+# 四、自动构建网络及识别模块
+# 确定软阈值（ps：流程化）
+# 设置软阈值调参范围，powers是数组，包括1，2，...10,12,14，...,20
+powers =c(c(1:10),seq(from = 12, to=20,by=2))
+# 网络拓扑分析
+sft = pickSoftThreshold(datExpr, powerVector = powers, verbose = 5)
+# 绘图
+sizeGrWindow(9, 5)	# 图片的宽度和高度
+# pdf(file="M:\\Data\\bioinfo\\WGCNA\\softthreshold.pdf",width=12,height=9);
+# 1行2列排列
+par(mfrow =c(1,2));	# 一页多图，一页被分为一行，两列
+cex1 = 0.9;
+# 无标度拓扑拟合指数与软阈值的函数(左图)，下面的会用就行
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     xlab="SoftThreshold(power)",ylab="ScaleFreeTopologyModelFit,signedR^2",type="n",
+     main =paste("Scaleindependence"));
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+     labels=powers,cex=cex1,col="red");
+# 这条线对应于h的R^2截止点
+abline(h=0.90,col="red")
+# Mean Connectivity与软阈值的函数(右图)
+plot(sft$fitIndices[,1], sft$fitIndices[,5],
+     xlab="SoftThreshold(power)",ylab="MeanConnectivity", type="n",
+     main =paste("Meanconnectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5],labels=powers, cex=cex1,col="red")
+# dev.off()
+
+# 一步构建网络和识别模块
+net = blockwiseModules(datExpr,power= 6,	 # 表达矩阵，软阈值
+                       TOMType ="unsigned", minModuleSize = 30,	# 数据为无符号类型，最小模块大小为30
+                       reassignThreshold = 0, mergeCutHeight = 0.25,	#mergeCutHeight合并模块的阈值，越大模块越少
+                       numericLabels = TRUE, pamRespectsDendro = FALSE,
+                       saveTOMs = TRUE,
+                       saveTOMFileBase ="femaleMouseTOM",
+                       verbose = 3)
+# 这时的net里就已经包含了基因分类为模块的相关信息
+# 查看识别了多少模块及模块大小
+table(net$colors)
+
+# 可视化模块
+sizeGrWindow(12, 9)
+# 将标签转换为颜色
+mergedColors = labels2colors(net$colors)
+# pdf(file="M:\\Data\\bioinfo\\WGCNA\\module.pdf",width=12,height=9);
+# 绘制树状图和模块颜色图
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+                    "Modulecolors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+# dev.off()
+
+# 保存模块赋值和模块特征基因信息，以供后续分析
+moduleLabels = net$colors
+moduleColors = labels2colors(net$colors)
+MEs = net$MEs;
+geneTree = net$dendrograms[[1]];
+save(MEs, moduleLabels, moduleColors, geneTree,
+     file="M:\\Data\\bioinfo\\WGCNA\\module.RData")
+
+# 量化模块-特征关系
+# 导入之前的数据
+lnames =load(file="M:\\Data\\bioinfo\\WGCNA\\module.RData");
+lnames
+# 明确基因和样本数
+nGenes =ncol(datExpr);
+nSamples =nrow(datExpr);
+# 用颜色标签重新计算MEs
+# 按照模块计算每个module的MEs（也就是该模块的第一主成分）
+# 按照下面的样式，得到的MEs0是将模块以颜色代表，各个样本中每个颜色的表达量，见下图
+MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
+# 对给定的(特征)向量重新排序，使相似的向量(通过相关性测量)彼此相邻。
+MEs = orderMEs(MEs0)	# 这时的MEs是将相似模块相邻后，即调整MEs0模块顺序后矩阵，这样在画模块性状关系图时，能够清晰捕捉特征
+# 计算基因模块MEs 与 临床特征的相关性以及p值
+# use 给出在缺少值时计算协方差的方法 
+moduleTraitCor =cor(MEs, datTraits, use ="p");	# 计算相关性系数
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)	# 计算P值
+
+# 可视化
+# 如需保存
+# pdf("M:\\Data\\bioinfo\\WGCNA\\Module-trait associations.pdf",width = 15, height=10)
+par(mar =c(6, 15, 3, 3))
+# 用热图展示相关性的结果
+# 每个单元格标记相关系数和p值
+textMatrix <- paste(
+  signif(moduleTraitCor, 2),
+  "\n(",
+  signif(moduleTraitPvalue, 1), ")",
+  sep = "")
+dim(textMatrix) <- dim(moduleTraitCor)
+labeledHeatmap(
+  Matrix = moduleTraitCor,
+  xLabels = names(datTraits),
+  yLabels = names(MEs),
+  ySymbols = names(MEs),
+  colorLabels = FALSE,
+  colors = blueWhiteRed(50),
+  textMatrix = textMatrix,
+  setStdMargins = FALSE,
+  cex.text = 0.5,
+  zlim = c(-1,1),
+  main = paste("Module-trait relationships"))
+# dev.off()
+
+TOM = TOMsimilarityFromExpr ( datExpr, power = 6)
+modules = c("brown","red")
+probes = names (datExpr)
+inModule = is.finite(match( moduleColors, modules));
+modProbes = probes [ inModule];
+modTOM = TOM[ inModule,inModule] ;
+dimnames (modTOM) = list (modProbes,modProbes)
+cyt = exportNetworkToCytoscape (
+  modTOM,
+  edgeFile = paste("M:\\Data\\bioinfo\\WGCNA\\CytoscapeInput-edges-",paste(modules,collapse="-"),
+                   ". txt", sep=""),
+  nodeFile = paste("M:\\Data\\bioinfo\\WGCNA\\CytoscapeInput-nodes-",paste(modules,collapse="-"),
+                   ". txt", sep=""),
+  weighted = TRUE,
+  threshold = 0.02,
+  nodeNames = modProbes ,
+  nodeAttr = moduleColors[inModule]
+)
+CytoscapeInput-edges-brown-red.txt和
+CytoscapeInput-nodes-brown-red.txt
+# 将这个两个文件导入cytoscape后便可得到共表达网络图（这里由于结点太多，所以在这之前最好处理一下，否则图片非常不清晰）
+
+# 以特征变量weight 为例
+weight =as.data.frame(datTraits$weight_g);
+names(weight) ="weight"
+# 命名模块
+modNames =substring(names(MEs), 3)
+geneModuleMembership =as.data.frame(cor(datExpr, MEs, use ="p"));
+MMPvalue =as.data.frame(corPvalueStudent(as.matrix(geneModuleMembership), nSamples));
+names(geneModuleMembership) =paste("MM", modNames, sep="");
+names(MMPvalue) =paste("p.MM", modNames, sep="");
+geneTraitSignificance =as.data.frame(cor(datExpr, weight, use ="p"));
+GSPvalue =as.data.frame(corPvalueStudent(as.matrix(geneTraitSignificance), nSamples));
+names(geneTraitSignificance) =paste("GS.",names(weight), sep="");
+names(GSPvalue) =paste("p.GS.",names(weight), sep="");
+
+module ="brown"
+column =match(module, modNames);
+moduleGenes = moduleColors==module;
+sizeGrWindow(7, 7);
+par(mfrow =c(1,1));
+verboseScatterplot(abs(geneModuleMembership[moduleGenes, column]),
+                   abs(geneTraitSignificance[moduleGenes, 1]),
+                   xlab =paste("ModuleMembershipin", module,"module"),
+                   ylab ="Genesignificanceforbodyweight",
+                   main =paste("Modulemembershipvs.genesignificance\n"),
+                   cex.main = 1.2, cex.lab = 1.2, cex.axis= 1.2,col= module)
+
+names(datExpr)
+# 返回brown模块中所有ID
+names(datExpr)[moduleColors=="brown"]
+# 导入注释文件
+annot = read.csv(file = "M:\\Data\\bioinfo\\WGCNA\\GeneAnnotation.csv");
+dim(annot)
+names(annot)
+probes = names(datExpr)
+probes2annot = match(probes, annot$substanceBXH)
+# 统计没有注释到的基因
+sum(is.na(probes2annot))
+# 创建数据集，包含探测ID ，
+geneInfo0 = data.frame(substanceBXH = probes, 
+                       geneSymbol = annot$gene_symbol[probes2annot], 
+                       LocusLinkID = annot$LocusLinkID[probes2annot], 
+                       moduleColor = moduleColors, 
+                       geneTraitSignificance, GSPvalue)
+# 通过显著性对模块进行排序
+modOrder = order(-abs(cor(MEs, weight, use = "p")))
+# 添加模块成员
+for (mod in 1:ncol(geneModuleMembership))
+{
+  oldNames = names(geneInfo0)
+  geneInfo0 = data.frame(geneInfo0, geneModuleMembership[, 
+                                                         modOrder[mod]],
+                         MMPvalue[, modOrder[mod]]);
+  names(geneInfo0) = c(oldNames, paste("MM.", 
+                                       modNames[modOrder[mod]], sep=""),
+                       paste("p.MM.", modNames[modOrder[mod]], sep=""))
+}
+# 对基因进行排序
+geneOrder = order(geneInfo0$moduleColor, abs(geneInfo0$GS.weight))
+geneInfo = geneInfo0[geneOrder, ]
+# 导出
+write.csv(geneInfo, file = "M:\\Data\\bioinfo\\WGCNA\\geneInfo.csv")
+
+# Get the corresponding Locuis Link IDs
+allLLIDs = annot$LocusLinkID[probes2annot];
+# 选择感兴趣的模块
+intModules = c("brown", "red", "salmon")
+for (module in intModules)
+{
+  # 模块探针
+  modGenes = (moduleColors==module)
+  # 得到 entrez ID 
+  modLLIDs = allLLIDs[modGenes];
+  # 导出
+  fileName = paste("M:\\Data\\bioinfo\\WGCNA\\LocusLinkIDs-", module, ".txt", sep="");
+  write.table(as.data.frame(modLLIDs), file = fileName,
+              row.names = FALSE, col.names = FALSE)
+}
