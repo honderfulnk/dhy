@@ -201,11 +201,66 @@ labeledHeatmap(
   main = paste("Module-trait relationships"))
 # dev.off()
 
-TOM = TOMsimilarityFromExpr ( datExpr, power = 6)
+# 模块检测时的计算，重新算一次
+dissTOM = 1-TOMsimilarityFromExpr(datExpr, power = 6);
+# 对dissTOM进行power转换，使中等强度的连接在热图中更加明显
+# plotTOM = dissTOM^7;
+# 设置对角线为NA以得到更好的图
+# diag(plotTOM) = NA;
+# 绘图
+# sizeGrWindow(9,9)
+# 画不出来
+# TOMplot(plotTOM, geneTree, moduleColors, main = "Network heatmap plot, all genes")
+
+nSelect = 400
+# 为了可重复，设置随机数种子
+set.seed(10);
+select = sample(nGenes, size = nSelect);
+selectTOM = dissTOM[select, select];
+# 没有简单的方法将聚类树限制在基因的一个子集，所以我们必须重新聚类
+selectTree = hclust(as.dist(selectTOM), method = "average")
+selectColors = moduleColors[select];
+# 绘制
+sizeGrWindow(9,9)
+plotDiss = selectTOM^7;
+diag(plotDiss) = NA;
+TOMplot(plotDiss, selectTree, selectColors, main = "Network heatmap plot, selected genes")
+
+# eigengenes网络可视化
+# 重新计算模块 eigengenes
+MEs = moduleEigengenes(datExpr, moduleColors)$eigengenes
+# 提取临床特征weight
+weight = as.data.frame(datTraits$weight_g);
+names(weight) = "weight"
+# 在eigengenes模块中加入临床特征weight
+MET = orderMEs(cbind(MEs, weight))
+# 绘制eigengenes和临床特征weight之间的关系图
+sizeGrWindow(5,7.5);
+par(cex = 0.9)
+plotEigengeneNetworks(MET, "", 
+                      marDendro = c(0,4,1,2), 
+                      marHeatmap = c(3,4,1,2), 
+                      cex.lab = 0.8, xLabelsAngle= 90)
+# 分别绘制                      
+# 绘制树状图
+# sizeGrWindow(6,6);
+# par(cex = 1.0)
+# plotEigengeneNetworks(MET, "Eigengene dendrogram", marDendro = c(0,4,2,0),
+#                      plotHeatmaps = FALSE)
+# 绘制热图
+# par(cex = 1.0)
+# plotEigengeneNetworks(MET, "Eigengene adjacency heatmap", marHeatmap = c(3,4,2,2),
+#                      plotDendrograms = FALSE, xLabelsAngle = 90)
+
+# 保存供cytoscopy作图的文件
+TOM = TOMsimilarityFromExpr (datExpr, power = 6)
 modules = c("brown","red")
+# 导入注释文件
+annot = read.csv(file = "M:\\Data\\bioinfo\\WGCNA\\GeneAnnotation.csv");
 probes = names (datExpr)
-inModule = is.finite(match( moduleColors, modules));
-modProbes = probes [ inModule];
+inModule = is.finite(match(moduleColors, modules));
+modProbes = probes [inModule];
+modGenes = annot$gene_symbol[match(modProbes, annot$substanceBXH)];
 modTOM = TOM[ inModule,inModule] ;
 dimnames (modTOM) = list (modProbes,modProbes)
 cyt = exportNetworkToCytoscape (
@@ -217,10 +272,11 @@ cyt = exportNetworkToCytoscape (
   weighted = TRUE,
   threshold = 0.02,
   nodeNames = modProbes ,
+  altNodeNames = modGenes,
   nodeAttr = moduleColors[inModule]
 )
-CytoscapeInput-edges-brown-red.txt和
-CytoscapeInput-nodes-brown-red.txt
+# CytoscapeInput-edges-brown-red.txt和
+# CytoscapeInput-nodes-brown-red.txt
 # 将这个两个文件导入cytoscape后便可得到共表达网络图（这里由于结点太多，所以在这之前最好处理一下，否则图片非常不清晰）
 
 # 以特征变量weight 为例
